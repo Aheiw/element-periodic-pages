@@ -101,7 +101,7 @@
         const bytes = Uint8Array.from(atob(fragment.replace(/-/g, "+").replace(/_/g, "/") + "="),
           char => char.charCodeAt(0));
         const key = await crypto.subtle.importKey("raw", bytes, "AES-GCM", false, ["decrypt"]);
-        const html = await decryptFile("page-v2.bin", key);
+        const html = await decryptFile("page-v2.bin?labels=roman", key);
         const frame = document.createElement("iframe");
         frame.title = "元素娘周期表";
         frame.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
