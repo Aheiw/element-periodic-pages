@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>元素娘周期表</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.55 "Microsoft YaHei UI", system-ui, sans-serif; color: #172539; background: #f2f5f9; }
+    body { margin: 0; }
+    .message { max-width: 31rem; margin: 12vh auto 0; padding: 0 24px; }
+    h1 { margin: 0 0 10px; font-size: 25px; }
+    p { margin: 0; }
+    iframe { display: block; width: 100%; height: 100vh; height: 100dvh; border: 0; }
+  </style>
+</head>
+<body>
+  <main class="message">
+    <h1>元素娘周期表</h1>
+    <p id="message" role="status">正在加载页面…</p>
+    <noscript>请允许网页运行 JavaScript，再打开完整链接。</noscript>
+  </main>
+  <script>
+    "use strict";
+    async function openTable() {
+      const message = document.getElementById("message");
+      const fragment = location.hash.slice(1);
+      if (!/^[A-Za-z0-9_-]{43}$/.test(fragment)) {
+        message.textContent = "请使用带访问密钥的完整链接打开周期表。";
+        return;
+      }
+      try {
+        const keyBytes = Uint8Array.from(atob(fragment.replace(/-/g, "+").replace(/_/g, "/") + "="),
+          char => char.charCodeAt(0));
+        const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"]);
+        const response = await fetch("table.bin");
+        if (!response.ok) throw Error("无法读取页面文件");
+        const packed = new Uint8Array(await response.arrayBuffer());
+        const compressed = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: packed.slice(0, 12) }, key, packed.subarray(12));
+        const decoded = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"));
+        const frame = document.createElement("iframe");
+        frame.title = "元素娘周期表";
+        frame.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
+        frame.srcdoc = await new Response(decoded).text();
+        document.body.replaceChildren(frame);
+      } catch {
+        message.textContent = "页面加载失败。请检查网络，再用完整的访问链接重试。";
+      }
+    }
+    openTable();
+  </script>
+</body>
+</html>
