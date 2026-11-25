@@ -11,42 +11,111 @@
     body { margin: 0; }
     .message { max-width: 31rem; margin: 12vh auto 0; padding: 0 24px; }
     h1 { margin: 0 0 10px; font-size: 25px; }
-    p { margin: 0; }
+    p { margin: 0 0 12px; }
+    input, button { font: inherit; padding: 6px 9px; }
+    input { width: 100%; box-sizing: border-box; margin-bottom: 8px; }
     iframe { display: block; width: 100%; height: 100vh; height: 100dvh; border: 0; }
   </style>
 </head>
 <body>
   <main class="message">
     <h1>元素娘周期表</h1>
-    <p id="message" role="status">正在加载页面…</p>
-    <noscript>请允许网页运行 JavaScript，再打开完整链接。</noscript>
+    <p id="message" role="status">正在加载周期表…</p>
+    <form id="access" hidden>
+      <input id="access-link" aria-label="完整访问链接" placeholder="粘贴完整访问链接" autocomplete="off" spellcheck="false">
+      <button>打开</button>
+    </form>
+    <button type="button" id="retry" hidden>重试</button>
+    <noscript>请用支持 JavaScript 的浏览器打开完整链接。</noscript>
   </main>
   <script>
     "use strict";
+    const keyPattern = /^[A-Za-z0-9_-]{43}$/;
+    const message = document.getElementById("message");
+    const access = document.getElementById("access");
+    const retry = document.getElementById("retry");
+
+    access.addEventListener("submit", event => {
+      event.preventDefault();
+      const input = document.getElementById("access-link");
+      const value = input.value.trim().split("#").pop();
+      if (keyPattern.test(value)) {
+        input.value = "";
+        if (location.hash === "#" + value) openTable();
+        else location.hash = value;
+      } else {
+        message.textContent = "请粘贴包含 # 和访问密钥的完整链接。";
+      }
+    });
+    retry.addEventListener("click", openTable);
+    addEventListener("hashchange", () => {
+      if (document.querySelector("iframe")) location.reload();
+      else openTable();
+    });
+
+    async function decryptFile(name, key) {
+      const response = await fetch(name);
+      if (!response.ok) throw Error("network");
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      return crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(0, 12) }, key, bytes.subarray(12));
+    }
+
+    function connectImages(frame, key) {
+      const packs = new Map();
+      addEventListener("message", async event => {
+        const request = event.data;
+        if (event.source !== frame.contentWindow || request?.type !== "periodic-image" ||
+            !/^\d{1,3}:\d{1,2}$/.test(request.id)) return;
+        const [pack, index] = request.id.split(":").map(Number);
+        if (!packs.has(pack)) {
+          packs.set(pack, decryptFile("images-v2-" + pack + ".bin", key)
+            .then(bytes => JSON.parse(new TextDecoder().decode(bytes)))
+            .catch(error => { packs.delete(pack); throw error; }));
+          if (packs.size > 6) packs.delete(packs.keys().next().value);
+        }
+        let source;
+        try {
+          source = (await packs.get(pack))[index];
+        } catch {
+          source = null;
+        }
+        frame.contentWindow.postMessage({ type: "periodic-image-result", id: request.id, source }, "*");
+      });
+    }
+
     async function openTable() {
-      const message = document.getElementById("message");
+      access.hidden = true;
+      retry.hidden = true;
       const fragment = location.hash.slice(1);
-      if (!/^[A-Za-z0-9_-]{43}$/.test(fragment)) {
-        message.textContent = "请使用带访问密钥的完整链接打开周期表。";
+      if (!keyPattern.test(fragment)) {
+        message.textContent = "这个地址缺少访问密钥。请粘贴之前收到的完整链接。";
+        access.hidden = false;
         return;
       }
+      if (!window.crypto?.subtle) {
+        message.textContent = "当前浏览器不支持页面解密，请用 Safari、Chrome 或 Edge 打开完整链接。";
+        return;
+      }
+      message.textContent = "正在加载周期表…";
       try {
-        const keyBytes = Uint8Array.from(atob(fragment.replace(/-/g, "+").replace(/_/g, "/") + "="),
+        const bytes = Uint8Array.from(atob(fragment.replace(/-/g, "+").replace(/_/g, "/") + "="),
           char => char.charCodeAt(0));
-        const key = await crypto.subtle.importKey("raw", keyBytes, "AES-GCM", false, ["decrypt"]);
-        const response = await fetch("table.bin");
-        if (!response.ok) throw Error("无法读取页面文件");
-        const packed = new Uint8Array(await response.arrayBuffer());
-        const compressed = await crypto.subtle.decrypt(
-          { name: "AES-GCM", iv: packed.slice(0, 12) }, key, packed.subarray(12));
-        const decoded = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"));
+        const key = await crypto.subtle.importKey("raw", bytes, "AES-GCM", false, ["decrypt"]);
+        const html = await decryptFile("page-v2.bin", key);
         const frame = document.createElement("iframe");
         frame.title = "元素娘周期表";
         frame.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
-        frame.srcdoc = await new Response(decoded).text();
+        connectImages(frame, key);
+        frame.srcdoc = new TextDecoder().decode(html);
         document.body.replaceChildren(frame);
-      } catch {
-        message.textContent = "页面加载失败。请检查网络，再用完整的访问链接重试。";
+      } catch (error) {
+        if (error.name === "OperationError") {
+          message.textContent = "链接的访问密钥有误。请重新粘贴完整链接。";
+          access.hidden = false;
+        } else {
+          message.textContent = "无法从 GitHub Pages 加载周期表，请检查网络后重试。";
+          retry.hidden = false;
+        }
       }
     }
     openTable();
